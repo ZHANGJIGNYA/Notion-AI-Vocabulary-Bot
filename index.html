@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Vocab Capture</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+            max-width: 680px;
+            margin: 24px auto;
+            padding: 0 16px
+        }
+        
+        .card {
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            padding: 16px
+        }
+        
+        textarea,
+        input,
+        button {
+            width: 100%;
+            font-size: 16px;
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid #d1d5db;
+            box-sizing: border-box
+        }
+        
+        button {
+            border: none;
+            cursor: pointer
+        }
+        
+        .row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap
+        }
+        
+        .row button {
+            flex: 1
+        }
+        
+        .muted {
+            color: #6b7280;
+            font-size: 13px
+        }
+        
+        .ok {
+            color: #16a34a
+        }
+        
+        .err {
+            color: #dc2626
+        }
+        
+        ul {
+            padding-left: 18px
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Vocab Capture</h1>
+    <p class="muted">Paste or type words (one per line), use OCR if needed, then Add.</p>
+
+    <div class="card">
+        <label>Words (one per line)</label>
+        <textarea id="words" rows="8" placeholder="resilient&#10;serendipity"></textarea>
+
+        <div style="height:10px"></div>
+
+        <div class="row">
+            <button id="paste">📋 Paste</button>
+            <input id="file" type="file" accept="image/*" capture="environment" style="display:none" />
+            <button id="ocr">📷 OCR</button>
+            <button id="add" style="background:#111827;color:white">Add to Notion</button>
+        </div>
+
+        <div id="status" class="muted" style="margin-top:10px"></div>
+        <div id="preview" class="muted"></div>
+    </div>
+
+    <!-- Tesseract.js for OCR -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+    <script>
+        const MAKE_WEBHOOK_URL = "PASTE_YOUR_MAKE_WEBHOOK_URL_HERE";
+
+        const $ = (id) => document.getElementById(id);
+        const statusEl = $("status");
+        const previewEl = $("preview");
+
+        function setStatus(msg, type = "muted") {
+            statusEl.className = type === "ok" ? "ok" : type === "err" ? "err" : "muted";
+            statusEl.textContent = msg;
+        }
+
+        function splitWords(text) {
+            return text
+                .split(/\r?\n|,|;|\t/)
+                .map(s => s.trim())
+                .filter(Boolean);
+        }
+
+        async function postBatch(items) {
+            const res = await fetch(MAKE_WEBHOOK_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    items
+                })
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return true;
+        }
+
+        $("paste").onclick = async() => {
+            try {
+                const t = await navigator.clipboard.readText();
+                $("words").value = ($("words").value + "\n" + t).trim();
+            } catch {
+                setStatus("Clipboard permission denied.", "err");
+            }
+        };
+
+        $("ocr").onclick = () => $("file").click();
+
+        $("file").onchange = async(e) => {
+            const f = e.target.files[0];
+            if (!f) return;
+            setStatus("Running OCR…");
+            try {
+                const {
+                    data
+                } = await Tesseract.recognize(f, "eng");
+                $("words").value = ($("words").value + "\n" + data.text).trim();
+                setStatus("OCR done.", "ok");
+            } catch {
+                setStatus("OCR failed.", "err");
+            }
+            e.target.value = "";
+        };
+
+        $("add").onclick = async() => {
+            const list = splitWords($("words").value);
+            if (!list.length) {
+                setStatus("No words to add.", "err");
+                return;
+            }
+            if (!MAKE_WEBHOOK_URL || MAKE_WEBHOOK_URL.includes("PASTE_YOUR")) {
+                setStatus("Please set MAKE_WEBHOOK_URL.", "err");
+                return;
+            }
+
+            const items = list.map(w => ({
+                word: w,
+                source: "web",
+                created_at: new Date().toISOString()
+            }));
+
+            previewEl.innerHTML = "<ul>" + items.map(i => `<li>${i.word}</li>`).join("") + "</ul>";
+
+            setStatus(`Sending ${items.length} word(s)…`);
+            $("add").disabled = true;
+
+            try {
+                await postBatch(items);
+                setStatus("Added ✅", "ok");
+                $("words").value = "";
+                previewEl.innerHTML = "";
+            } catch {
+                setStatus("Failed to send batch.", "err");
+            } finally {
+                $("add").disabled = false;
+            }
+        };
+    </script>
+</body>
+
+</html>

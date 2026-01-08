@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="zh">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vocab Heatmap</title>
+    <style>
+         :root {
+            --zero: rgba(255, 255, 255, 0.06);
+            --cell: 14px;
+            --gap: 4px;
+            --radius: 3px;
+            --bg: #0f0f12;
+            --text: #eaeaf0;
+            --muted: #a7a7b3;
+            /* add */
+            --add0: var(--zero);
+            --add1: #7a4b1f;
+            --add2: #ff9f43;
+            --add3: #ff7a00;
+            /* rev */
+            --rev0: var(--zero);
+            --rev1: #2f6b45;
+            --rev2: #5dd39e;
+            --rev3: #1f9d63;
+            /* quiz */
+            --quiz0: var(--zero);
+            --quiz1: #2b4f73;
+            --quiz2: #5aa9e6;
+            --quiz3: #1d7dd6;
+        }
+        
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei";
+        }
+        
+        .wrap {
+            padding: 18px 16px 22px;
+            max-width: 980px;
+            margin: 0 auto;
+        }
+        
+        .title {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        
+        .title h1 {
+            font-size: 18px;
+            margin: 0;
+        }
+        
+        .title .hint {
+            font-size: 12px;
+            color: var(--muted);
+        }
+        /* 主体布局：左边月份标签 + 网格 */
+        
+        .heatmap {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 10px;
+            align-items: start;
+        }
+        
+        .months {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            padding-top: 2px;
+        }
+        
+        .month {
+            height: calc(var(--cell) + var(--gap));
+            font-size: 11px;
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 6px;
+            user-select: none;
+            white-space: nowrap;
+        }
+        
+        .grid {
+            display: grid;
+            grid-auto-flow: column;
+            grid-auto-columns: calc(var(--cell) + var(--gap));
+            grid-template-rows: repeat(7, calc(var(--cell) + var(--gap)));
+            gap: 0;
+            padding-bottom: 6px;
+        }
+        
+        .col-sep {
+            position: relative;
+        }
+        
+        .col-sep::before {
+            content: "";
+            position: absolute;
+            left: -2px;
+            top: 0;
+            width: 1px;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.10);
+        }
+        
+        .cell {
+            width: var(--cell);
+            height: var(--cell);
+            border-radius: var(--radius);
+            display: flex;
+            overflow: hidden;
+            outline: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        
+        .seg {
+            background: var(--zero);
+            flex: 1 1 0;
+            height: 100%;
+        }
+        /* Map classes -> colors */
+        
+        .add1 {
+            background: var(--add1) !important;
+        }
+        
+        .add2 {
+            background: var(--add2) !important;
+        }
+        
+        .add3 {
+            background: var(--add3) !important;
+        }
+        
+        .rev1 {
+            background: var(--rev1) !important;
+        }
+        
+        .rev2 {
+            background: var(--rev2) !important;
+        }
+        
+        .rev3 {
+            background: var(--rev3) !important;
+        }
+        
+        .quiz1 {
+            background: var(--quiz1) !important;
+        }
+        
+        .quiz2 {
+            background: var(--quiz2) !important;
+        }
+        
+        .quiz3 {
+            background: var(--quiz3) !important;
+        }
+        
+        .legend {
+            margin-top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            color: var(--muted);
+            font-size: 12px;
+        }
+        
+        .legend-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .legend-label {
+            width: 64px;
+            text-align: left;
+            color: var(--text);
+        }
+        
+        .legend-note {
+            margin-left: 4px;
+            color: var(--muted);
+            white-space: nowrap;
+            /* “Low → High” 不换行把布局搞乱 */
+        }
+        
+        .chip {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            outline: 1px solid rgba(255, 255, 255, 0.08);
+            background: var(--zero);
+        }
+        
+        .pill {
+            display: inline-flex;
+            gap: 6px;
+            align-items: center;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text);
+            font-size: 12px;
+        }
+        
+        .tooltip {
+            position: fixed;
+            pointer-events: none;
+            background: rgba(20, 20, 26, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: var(--text);
+            padding: 8px 10px;
+            border-radius: 8px;
+            font-size: 12px;
+            transform: translate(-50%, -120%);
+            opacity: 0;
+            transition: opacity .12s ease;
+            white-space: nowrap;
+            z-index: 9999;
+        }
+        
+        .tooltip small {
+            color: var(--muted);
+            display: block;
+            margin-top: 2px;
+        }
+        
+        .grid-wrap {
+            display: inline-block;
+            overflow-x: auto;
+            /* ✅ 统一在外层滚动 */
+            padding-bottom: 6px;
+        }
+        
+        .months-top {
+            display: grid;
+            grid-auto-flow: column;
+            grid-auto-columns: calc(var(--cell) + var(--gap));
+            gap: 0;
+            margin-bottom: 6px;
+            user-select: none;
+            position: sticky;
+            /* 可选：滚动时保持在上方 */
+            top: 0;
+            background: var(--bg);
+            /* 避免遮挡时透底 */
+            z-index: 5;
+        }
+        
+        .month-label {
+            font-size: 11px;
+            color: var(--muted);
+            height: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <div class="title">
+            <h1>Vocabulary Heatmap</h1>
+            <div class="hint">每格 3 段：add / review / quiz</div>
+        </div>
+
+        <div class="heatmap">
+            <div class="months" id="months"></div>
+            <div class="grid-wrap" id="gridWrap">
+                <div class="months-top" id="monthsTop"></div>
+                <div class="grid" id="grid"></div>
+            </div>
+        </div>
+
+        <div class="legend">
+            <span class="pill">Top = New · Middle = Review · Bottom = Quiz</span>
+            <div class="legend-row">
+                <span class="legend-label">New</span>
+                <span class="chip add1"></span>
+                <span class="chip add2"></span>
+                <span class="chip add3"></span>
+                <span class="legend-note">Low → High</span>
+            </div>
+
+            <div class="legend-row">
+                <span class="legend-label">Review</span>
+                <span class="chip rev1"></span>
+                <span class="chip rev2"></span>
+                <span class="chip rev3"></span>
+                <span class="legend-note">Low → High</span>
+            </div>
+
+            <div class="legend-row">
+                <span class="legend-label">Quiz</span>
+                <span class="chip quiz1"></span>
+                <span class="chip quiz2"></span>
+                <span class="chip quiz3"></span>
+                <span class="legend-note">Low → High</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tip"></div>
+
+    <script>
+        // 你后面接 Make / Google Sheets 时，最终只要产出这种结构即可：
+        // date: YYYY-MM-DD
+        // add/review/quiz: 0-4（或你自己定义的强度）
+        const data = [{
+            date: "2026-01-01",
+            add: 2,
+            review: 0,
+            quiz: 0
+        }, {
+            date: "2026-01-02",
+            add: 1,
+            review: 1,
+            quiz: 0
+        }, {
+            date: "2026-01-03",
+            add: 0,
+            review: 3,
+            quiz: 1
+        }, {
+            date: "2026-01-04",
+            add: 4,
+            review: 2,
+            quiz: 2
+        }, {
+            date: "2026-01-05",
+            add: 0,
+            review: 0,
+            quiz: 0
+        }, {
+            date: "2026-01-06",
+            add: 1,
+            review: 4,
+            quiz: 3
+        }, ];
+
+        // ========== 工具函数 ==========
+        const pad = n => String(n).padStart(2, "0");
+        const toISO = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+        const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+        const levelClass = (n) => `lvl${clamp(Math.round(n), 0, 4)}`;
+
+        // ========== 构建索引 ==========
+        const map = new Map(data.map(x => [x.date, x]));
+
+        // 画最近 180 天（你也可以改成 365）
+        const DAYS = 180;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const start = new Date(today);
+        start.setDate(start.getDate() - (DAYS - 1));
+
+        // 对齐到周一（可改成周日），让网格更整齐
+        const startDay = start.getDay(); // 0 Sun ... 6 Sat
+        const mondayIndex = (startDay + 6) % 7; // Monday=0
+        start.setDate(start.getDate() - mondayIndex);
+
+        // ========== 渲染月份标签（粗略：每月第一周显示） ==========
+        const monthsEl = document.getElementById("months");
+        const gridEl = document.getElementById("grid");
+        const tip = document.getElementById("tip");
+
+        function monthName(m) {
+            // 中文月份显示：1 月 / 2 月
+            return `${m+1} 月`;
+        }
+
+        // ========== 渲染格子 ==========
+        let cursor = new Date(start);
+        const end = new Date(today);
+        end.setDate(end.getDate() + (7 - ((end.getDay() + 6) % 7) - 1)); // 补齐到周日
+
+        // 先统计列数（每列 7 天）
+        const totalDays = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+        const cols = Math.ceil(totalDays / 7);
+
+        // months 标签：按列放（每列对应一周）
+        // 简化：如果这一列包含当月 1 号，就显示月份名，否则空行
+        const monthLabels = [];
+        for (let c = 0; c < cols; c++) {
+            const weekStart = new Date(start);
+            weekStart.setDate(start.getDate() + c * 7);
+            const weekEnd = new Date(weekStart);
+            weekEnd.setDate(weekStart.getDate() + 6);
+
+            // 如果这周跨到了新月份，且包含该月 1 号
+            let label = "";
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(weekStart);
+                d.setDate(weekStart.getDate() + i);
+                if (d.getDate() === 1) {
+                    label = monthName(d.getMonth());
+                    break;
+                }
+            }
+            monthLabels.push(label);
+        }
+
+        // 左侧月份标签用“行”模拟（对齐 7 行的高度），这里用 7 行占位
+        // 视觉上只需要第一行显示月份即可，所以我们放 7 个空行 + 让 grid 顶部对齐
+        // 更精细可以做上方横向月份标签，但先让它能用
+        monthsEl.innerHTML = `
+    <div class="month"> </div>
+    <div class="month"> </div>
+    <div class="month"> </div>
+    <div class="month"> </div>
+    <div class="month"> </div>
+    <div class="month"> </div>
+    <div class="month"> </div>
+  `;
+
+        // 顶部月份横向标签（可选）：用 grid 的滚动条更像 GitHub
+        // 我们直接把月份作为每列的 title，hover 能看到
+        gridEl.style.gridTemplateRows = `repeat(7, calc(var(--cell) + var(--gap)))`;
+
+        // 生成所有天格子，按列（周）推进
+        const cells = [];
+        cursor = new Date(start);
+
+        for (let dayIndex = 0; dayIndex < totalDays; dayIndex++) {
+            const iso = toISO(cursor);
+            const val = map.get(iso) || {
+                add: 0,
+                review: 0,
+                quiz: 0
+            };
+            const cell = document.createElement("div");
+            cell.className = "cell";
+
+
+            cell.dataset.date = iso;
+            cell.dataset.add = (val.add !== undefined && val.add !== null) ? val.add : 0;
+            cell.dataset.review = (val.review !== undefined && val.review !== null) ? val.review : 0;
+            cell.dataset.quiz = (val.quiz !== undefined && val.quiz !== null) ? val.quiz : 0;
+
+            const s1 = document.createElement("div");
+            s1.className = `seg ${addClass(val.add)}`;
+
+            const s2 = document.createElement("div");
+            s2.className = `seg ${revClass(val.review)}`;
+
+            const s3 = document.createElement("div");
+            s3.className = `seg ${quizClass(val.quiz)}`;
+
+            cell.appendChild(s1);
+            cell.appendChild(s2);
+            cell.appendChild(s3);
+
+            // tooltip
+            cell.addEventListener("mousemove", (e) => {
+                tip.style.left = e.clientX + "px";
+                tip.style.top = e.clientY + "px";
+                tip.style.opacity = "1";
+                tip.innerHTML = `
+        <b>${iso}</b>
+        <small>新增: ${cell.dataset.add} · 复习: ${cell.dataset.review} · 测试: ${cell.dataset.quiz}</small>
+      `;
+            });
+            cell.addEventListener("mouseleave", () => tip.style.opacity = "0");
+
+            cells.push(cell);
+
+            cursor.setDate(cursor.getDate() + 1);
+        }
+
+        // grid 是按 column-flow：先填满 7 行，再换下一列
+        // 我们需要把 cells 按星期行来排列：row = weekday(Mon..Sun)
+        // 这里已经对齐到周一 start，所以直接按顺序 append 就行
+        cells.forEach(x => gridEl.appendChild(x));
+
+
+        function addClass(n) {
+            n = Number(n) || 0;
+            if (n >= 3) return "add3";
+            if (n === 2) return "add2";
+            if (n === 1) return "add1";
+            return ""; // 0 => no class
+        }
+
+        function revClass(n) {
+            n = Number(n) || 0;
+            if (n >= 3) return "rev3";
+            if (n === 2) return "rev2";
+            if (n === 1) return "rev1";
+            return "";
+        }
+
+        function quizClass(n) {
+            n = Number(n) || 0;
+            if (n >= 3) return "quiz3";
+            if (n === 2) return "quiz2";
+            if (n === 1) return "quiz1";
+            return "";
+        }
+        const monthsTopEl = document.getElementById("monthsTop");
+
+        function monthLabel(m) {
+            return `${m + 1}`;
+        }
+
+        // 记录每一列（每周）是否是“月份开始列”
+        const isMonthStartCol = new Array(cols).fill(false);
+
+        // 生成 cols 个列标签：该列的 7 天里如果出现当月 1 号，就显示月份名
+        const monthLabelsTop = [];
+        for (let c = 0; c < cols; c++) {
+            const weekStart = new Date(start);
+            weekStart.setDate(start.getDate() + c * 7);
+
+            let label = "";
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(weekStart);
+                d.setDate(weekStart.getDate() + i);
+                if (d.getDate() === 1) {
+                    label = monthLabel(d.getMonth());
+                    isMonthStartCol[c] = true;
+                    break;
+                }
+            }
+            monthLabelsTop.push(label);
+        }
+
+        // 渲染月份行（每列一个格）
+        monthsTopEl.innerHTML = "";
+        monthLabelsTop.forEach((t) => {
+            const div = document.createElement("div");
+            div.className = "month-label";
+            div.textContent = t;
+            monthsTopEl.appendChild(div);
+        });
+    </script>
+</body>
+
+</html>
