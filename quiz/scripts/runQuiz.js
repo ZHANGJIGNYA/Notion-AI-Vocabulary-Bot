@@ -1,6 +1,5 @@
 // scripts/runQuiz.js
 
-const fetch = require('node-fetch'); // GitHub Actions 环境通常需要这个
 
 async function main() {
     try {
