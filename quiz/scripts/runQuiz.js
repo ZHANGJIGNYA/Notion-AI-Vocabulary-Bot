@@ -2,7 +2,7 @@
 
 async function main() {
     try {
-        console.log("🚀 Starting MCQ Quiz Generation (Debug Mode)...");
+        console.log("🚀 Starting MCQ Quiz Generation (Deep Debug Mode)...");
 
         const databaseId = process.env.NOTION_DB_ID;
         const notionToken = process.env.NOTION_TOKEN;
@@ -66,88 +66,78 @@ async function main() {
 
             console.log(`   - Generating [${selectedType}] for: "${word}"`);
 
-            // --- 🔧 简化版 Prompt (降低 AI 思考难度) ---
-            let prompt = `Generate a multiple-choice quiz for the word: "${word}".
-            Type: ${selectedType}.
-            
+            // Prompt
+            let prompt = `Generate a multiple-choice quiz for the word: "${word}". Type: ${selectedType}.
             Strictly output valid JSON only. Format:
             {
-              "q": "The question text here",
+              "q": "question",
               "a": "${word}",
-              "w": ["wrong word 1", "wrong word 2", "wrong word 3"]
-            }
+              "w": ["wrong1", "wrong2", "wrong3"]
+            }`;
 
-            Rules:
-            1. "q": The question.
-            2. "a": The correct answer (must be the word "${word}").
-            3. "w": An array of exactly 3 incorrect options (distractors).
-            `;
-
-            if (selectedType === "sentence") prompt += ` For "q", write a sentence with "______" missing.`;
-            if (selectedType === "definition") prompt += ` For "q", write the definition.`;
-            if (selectedType === "thesaurus") prompt += ` For "q", ask for synonyms.`;
-
-            // 调用 Gemini
+            // 调用 Gemini (带详细错误检查)
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
+
             const geminiResp = await fetch(geminiUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     contents: [{ parts: [{ text: prompt }] }]
-                        // 暂时去掉 response_mime_type，因为有些旧版 Flash 模型对这个支持不稳定，我们用正则提取更稳
                 })
             });
 
-            const gData = await geminiResp.json();
-
-            // 获取 AI 文本
-            let aiText = "{}";
-            if (gData && gData.candidates && gData.candidates.length > 0) {
-                const firstCandidate = gData.candidates[0];
-                if (firstCandidate.content && firstCandidate.content.parts && firstCandidate.content.parts.length > 0) {
-                    aiText = firstCandidate.content.parts[0].text || "{}";
-                }
+            // 🚨🚨🚨 核心调试点：检查 HTTP 状态码 🚨🚨🚨
+            if (!geminiResp.ok) {
+                const errorText = await geminiResp.text();
+                console.error(`   ❌ GEMINI API ERROR! Status: ${geminiResp.status}`);
+                console.error(`   ❌ Error Details: ${errorText}`);
+                console.log("   ⚠️ Skipping this word due to API error.");
+                continue; // 跳过这个词，防止程序崩溃
             }
 
-            // 🐛 打印出来给用户看 (关键一步！)
-            console.log("   🐛 DEBUG AI OUTPUT:", aiText);
+            const gData = await geminiResp.json();
 
-            // --- 🔧 强力 JSON 提取 ---
+            // 🚨🚨🚨 检查返回的数据结构 🚨🚨🚨
+            if (!gData.candidates || gData.candidates.length === 0) {
+                console.error("   ❌ Gemini returned 200 OK, but NO candidates.");
+                console.error("   ❌ Full Response:", JSON.stringify(gData));
+
+                // 如果是被 Safety Filter 拦截了，通常会有 promptFeedback
+                if (gData.promptFeedback) {
+                    console.error("   ❌ Safety Block:", JSON.stringify(gData.promptFeedback));
+                }
+                continue;
+            }
+
+            // 获取 AI 文本
+            let aiText = gData.candidates[0].content.parts[0].text;
+
+            // 提取 JSON
             let quizData = {};
             try {
-                // 尝试提取第一个 { 和最后一个 } 之间的内容
                 const firstBrace = aiText.indexOf('{');
                 const lastBrace = aiText.lastIndexOf('}');
                 if (firstBrace !== -1 && lastBrace !== -1) {
-                    const jsonStr = aiText.substring(firstBrace, lastBrace + 1);
-                    quizData = JSON.parse(jsonStr);
+                    quizData = JSON.parse(aiText.substring(firstBrace, lastBrace + 1));
                 } else {
-                    // 如果没找到大括号，尝试直接解析
                     quizData = JSON.parse(aiText);
                 }
             } catch (e) {
-                console.error("   ❌ JSON Parse Failed. Falling back.");
+                console.error("   ⚠️ JSON Parse Failed. Raw:", aiText);
+                // 这里如果不跳过，就会生成错误题目。为了调试，我们先生成个假题目看看流程对不对
+                quizData = { q: "Error generating quiz", a: word, w: ["Error", "Error", "Error"] };
             }
 
-            // --- 🔧 数据标准化 (兼容 simplified keys) ---
-            // 无论 AI 返回 q/question, a/correct, w/distractors，我们都认
+            // 标准化数据
             const questionText = quizData.q || quizData.question || `Quiz for ${word}`;
             const correctAnswer = quizData.a || quizData.correct || word;
             let distractors = quizData.w || quizData.distractors || [];
 
-            // 再次检查 distractors 是否为字符串
-            if (typeof distractors === 'string') {
-                distractors = distractors.split(/,|-|\n/).map(s => s.trim()).filter(s => s.length > 0);
-            }
-            if (!Array.isArray(distractors)) distractors = [];
-
-            // 如果还是不够，这次我们打印显眼的错误提示，但依然补全以防程序挂掉
-            while (distractors.length < 3) {
-                distractors.push("⚠️ Error: AI failed option");
-            }
+            if (!Array.isArray(distractors)) distractors = ["Option 1", "Option 2", "Option 3"];
+            while (distractors.length < 3) distractors.push("Option X");
             distractors = distractors.slice(0, 3);
 
-            // --- 🔀 洗牌逻辑 ---
+            // 洗牌
             let options = [
                 { text: correctAnswer, isCorrect: true },
                 { text: distractors[0], isCorrect: false },
@@ -167,7 +157,7 @@ async function main() {
                 if (opt.isCorrect) correctLabel = label;
             });
 
-            // 4. 写入 Notion
+            // 写入 Notion
             const updateResp = await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
                 method: "PATCH",
                 headers: {
@@ -177,20 +167,15 @@ async function main() {
                 },
                 body: JSON.stringify({
                     properties: {
-                        "Question": {
-                            rich_text: [{ text: { content: finalQuestion } }]
-                        },
-                        "Answer Key": {
-                            rich_text: [{ text: { content: correctLabel } }]
-                        },
+                        "Question": { rich_text: [{ text: { content: finalQuestion } }] },
+                        "Answer Key": { rich_text: [{ text: { content: correctLabel } }] },
                         "My Answer": { rich_text: [] }
                     }
                 })
             });
 
             if (!updateResp.ok) {
-                const errorDetail = await updateResp.text();
-                console.error(`   ❌ Failed to update Notion:`, errorDetail);
+                console.error(`   ❌ Notion Update Failed:`, await updateResp.text());
             } else {
                 console.log(`   ✅ Generated MCQ for ${word} (Ans: ${correctLabel})`);
             }
