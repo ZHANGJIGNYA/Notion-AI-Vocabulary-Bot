@@ -1,11 +1,8 @@
 // quiz/scripts/runQuiz.js
 
-// 移除 node-fetch，使用 Node 18 原生 fetch
-// const fetch = require('node-fetch'); 
-
 async function main() {
     try {
-        console.log("🚀 Starting MCQ Quiz Generation (JSON Extractor Mode)...");
+        console.log("🚀 Starting MCQ Quiz Generation (JSON Mode + AutoFix)...");
 
         const databaseId = process.env.NOTION_DB_ID;
         const notionToken = process.env.NOTION_TOKEN;
@@ -70,50 +67,45 @@ async function main() {
             console.log(`   - Generating [${selectedType}] for: "${word}"`);
 
             // 构造 Prompt
-            let prompt = `Task: Create a Multiple Choice Quiz for the English word: "${word}". Type: ${selectedType}.`;
+            let prompt = `Task: Create a Multiple Choice Quiz for the English word: "${word}". Type: ${selectedType}.
+            
+            Output JSON Schema:
+            {
+                "question": "string (The question text)",
+                "correct": "string (The correct answer word)",
+                "distractors": ["string", "string", "string"] (Array of 3 incorrect words)
+            }
+            `;
 
             if (selectedType === "sentence") {
                 prompt += `
-                Create a sentence where "${word}" fits perfectly, replacing it with "______".
-                Output format:
-                {
-                    "question": "The sentence...",
-                    "correct": "${word}",
-                    "distractors": ["word1", "word2", "word3"]
-                }`;
+                Requirement: Create a sentence where "${word}" fits perfectly, replacing it with "______".
+                Distractors must be the same part of speech and contextually plausible but wrong.`;
             } else if (selectedType === "definition") {
                 prompt += `
-                Provide an English definition for "${word}".
-                Output format:
-                {
-                    "question": "Definition: ...",
-                    "correct": "${word}",
-                    "distractors": ["word1", "word2", "word3"]
-                }`;
+                Requirement: Provide a clear English definition for "${word}".`;
             } else if (selectedType === "thesaurus") {
                 prompt += `
-                Provide synonyms for "${word}".
-                Output format:
-                {
-                    "question": "Which word means: [synonyms]?",
-                    "correct": "${word}",
-                    "distractors": ["word1", "word2", "word3"]
-                }`;
+                Requirement: Ask "Which word means: [synonyms]?".`;
             }
 
-            prompt += `\nIMPORTANT: Return ONLY the JSON object. Do not add markdown formatting or explanation.`;
-
-            // 调用 Gemini
+            // 调用 Gemini (开启 JSON Mode)
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
             const geminiResp = await fetch(geminiUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    // 🌟 核心修改：强制开启 JSON 模式
+                    generationConfig: {
+                        response_mime_type: "application/json"
+                    }
+                })
             });
 
             const gData = await geminiResp.json();
 
-            // 获取 AI 原始文本
+            // 获取 AI 文本
             let aiText = "{}";
             if (gData && gData.candidates && gData.candidates.length > 0) {
                 const firstCandidate = gData.candidates[0];
@@ -122,37 +114,39 @@ async function main() {
                 }
             }
 
-            // --- 🛠️ 关键修复：JSON 正则提取器 ---
-            // 不管 AI 加了多少废话，只提取 { ... } 里面的内容
             let quizData = {};
             try {
-                // 1. 找到第一个 '{' 和最后一个 '}'
-                const firstBrace = aiText.indexOf('{');
-                const lastBrace = aiText.lastIndexOf('}');
-
-                if (firstBrace !== -1 && lastBrace !== -1) {
-                    // 截取纯净的 JSON 字符串
-                    const jsonString = aiText.substring(firstBrace, lastBrace + 1);
-                    quizData = JSON.parse(jsonString);
-                } else {
-                    throw new Error("No JSON braces found");
-                }
+                // 直接解析，因为开了 JSON Mode，通常不需要正则清洗了
+                quizData = JSON.parse(aiText);
             } catch (e) {
-                console.error("   ⚠️ JSON Parse Failed. Raw text was:", aiText);
-                // 这里我们跳过这个词，不再生成错误的题目
+                console.error("   ⚠️ JSON Parse Failed. AI Output:", aiText);
                 continue;
             }
 
-            // --- 检查数据完整性 ---
-            // 如果 distractors 丢了，还是跳过吧，宁缺毋滥
-            if (!quizData.distractors || !Array.isArray(quizData.distractors) || quizData.distractors.length < 3) {
-                console.error("   ⚠️ Invalid distractors format. Skipping.");
-                continue;
+            // --- 🛡️ 自动修复逻辑 (Auto Fix) ---
+
+            // 修复 1: 如果 distractors 是字符串 (例如 "a, b, c")，自动转数组
+            if (typeof quizData.distractors === 'string') {
+                quizData.distractors = quizData.distractors.split(/,|-|\n/).map(s => s.trim()).filter(s => s.length > 0);
             }
+
+            // 修复 2: 如果 distractors 还是空的或者不够，从备用库里补
+            if (!Array.isArray(quizData.distractors)) {
+                quizData.distractors = [];
+            }
+
+            // 补全不够的选项，防止报错跳过
+            while (quizData.distractors.length < 3) {
+                quizData.distractors.push("Another Option");
+            }
+
+            // 截断多余的 (万一给了 10 个)
+            quizData.distractors = quizData.distractors.slice(0, 3);
+
 
             // --- 🔀 洗牌逻辑 ---
             let options = [
-                { text: quizData.correct, isCorrect: true },
+                { text: quizData.correct || word, isCorrect: true }, // 这里的 fallback 防止 correct 为空
                 { text: quizData.distractors[0], isCorrect: false },
                 { text: quizData.distractors[1], isCorrect: false },
                 { text: quizData.distractors[2], isCorrect: false }
@@ -161,7 +155,7 @@ async function main() {
             options.sort(() => Math.random() - 0.5);
 
             const labels = ["A", "B", "C", "D"];
-            let questionText = quizData.question + "\n\n";
+            let questionText = (quizData.question || `Quiz for ${word}`) + "\n\n";
             let correctLabel = "";
 
             options.forEach((opt, index) => {
@@ -170,7 +164,7 @@ async function main() {
                 if (opt.isCorrect) correctLabel = label;
             });
 
-            // 4. 写入 Notion (带错误检查)
+            // 4. 写入 Notion
             const updateResp = await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
                 method: "PATCH",
                 headers: {
