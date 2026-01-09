@@ -1,0 +1,39 @@
+name: Generate Notion Quiz 🤖
+
+on:
+  # 允许你在网页上点击按钮手动触发
+  workflow_dispatch:
+  
+  # (可选) 如果你想每天早上 8 点自动跑，把下面两行的 # 去掉
+  # schedule:
+  #   - cron: '0 0 * * *'
+
+jobs:
+  run-quiz:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code (下载代码)
+        uses: actions/checkout@v3
+
+      - name: 🟢 Setup Node.js (安装环境)
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: 📦 Install dependencies (安装依赖)
+        # 如果你有 package.json，它会安装；如果没有，手动安装 node-fetch 以防万一
+        run: |
+          if [ -f package.json ]; then
+            npm install
+          else
+            npm install node-fetch
+          fi
+
+      - name: 🚀 Run Quiz Script (运行脚本)
+        # 这里把我们在 GitHub 网页设置的密码传给脚本
+        env:
+          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: node scripts/runQuiz.js
