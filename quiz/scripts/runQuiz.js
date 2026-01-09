@@ -1,11 +1,11 @@
 // quiz/scripts/runQuiz.js
 
-// 移除 node-fetch 依赖，直接使用 Node 18 原生 fetch
+// 移除 node-fetch，使用 Node 18 原生 fetch
 // const fetch = require('node-fetch'); 
 
 async function main() {
     try {
-        console.log("🚀 Starting MCQ Quiz Generation (Robust Mode)...");
+        console.log("🚀 Starting MCQ Quiz Generation (JSON Extractor Mode)...");
 
         const databaseId = process.env.NOTION_DB_ID;
         const notionToken = process.env.NOTION_TOKEN;
@@ -38,14 +38,12 @@ async function main() {
 
         // 日期过滤
         const todayStr = new Date().toISOString().split('T')[0];
-
         wordsToQuiz = wordsToQuiz.filter(p => {
             const lastQuiz = p.properties["Last Quiz"];
             if (!lastQuiz || !lastQuiz.date) return true;
             return lastQuiz.date.start !== todayStr;
         });
 
-        // 随机打乱
         wordsToQuiz.sort(() => 0.5 - Math.random());
 
         if (wordsToQuiz.length === 0) {
@@ -66,7 +64,6 @@ async function main() {
 
             if (!word) continue;
 
-            // 随机题型
             const quizTypes = ["sentence", "definition", "thesaurus"];
             const selectedType = quizTypes[Math.floor(Math.random() * quizTypes.length)];
 
@@ -78,16 +75,17 @@ async function main() {
             if (selectedType === "sentence") {
                 prompt += `
                 Create a sentence where "${word}" fits perfectly, replacing it with "______".
-                JSON Output: {
+                Output format:
+                {
                     "question": "The sentence...",
                     "correct": "${word}",
                     "distractors": ["word1", "word2", "word3"]
-                }
-                (Distractors must be same part of speech, plausible but wrong).`;
+                }`;
             } else if (selectedType === "definition") {
                 prompt += `
                 Provide an English definition for "${word}".
-                JSON Output: {
+                Output format:
+                {
                     "question": "Definition: ...",
                     "correct": "${word}",
                     "distractors": ["word1", "word2", "word3"]
@@ -95,17 +93,15 @@ async function main() {
             } else if (selectedType === "thesaurus") {
                 prompt += `
                 Provide synonyms for "${word}".
-                JSON Output: {
+                Output format:
+                {
                     "question": "Which word means: [synonyms]?",
                     "correct": "${word}",
                     "distractors": ["word1", "word2", "word3"]
                 }`;
             }
 
-            prompt += `
-            IMPORTANT: Output RAW JSON only. Do not wrap in markdown blocks. 
-            Ensure "distractors" is an array of 3 strings.
-            `;
+            prompt += `\nIMPORTANT: Return ONLY the JSON object. Do not add markdown formatting or explanation.`;
 
             // 调用 Gemini
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
@@ -117,7 +113,7 @@ async function main() {
 
             const gData = await geminiResp.json();
 
-            // 获取 AI 回复 (防报错写法)
+            // 获取 AI 原始文本
             let aiText = "{}";
             if (gData && gData.candidates && gData.candidates.length > 0) {
                 const firstCandidate = gData.candidates[0];
@@ -126,32 +122,32 @@ async function main() {
                 }
             }
 
-            // 清洗 JSON
-            aiText = aiText.replace(/```json/g, "").replace(/```/g, "").trim();
-
+            // --- 🛠️ 关键修复：JSON 正则提取器 ---
+            // 不管 AI 加了多少废话，只提取 { ... } 里面的内容
             let quizData = {};
             try {
-                quizData = JSON.parse(aiText);
+                // 1. 找到第一个 '{' 和最后一个 '}'
+                const firstBrace = aiText.indexOf('{');
+                const lastBrace = aiText.lastIndexOf('}');
+
+                if (firstBrace !== -1 && lastBrace !== -1) {
+                    // 截取纯净的 JSON 字符串
+                    const jsonString = aiText.substring(firstBrace, lastBrace + 1);
+                    quizData = JSON.parse(jsonString);
+                } else {
+                    throw new Error("No JSON braces found");
+                }
             } catch (e) {
-                console.error("   ⚠️ JSON Parse Error. Raw output:", aiText);
+                console.error("   ⚠️ JSON Parse Failed. Raw text was:", aiText);
+                // 这里我们跳过这个词，不再生成错误的题目
                 continue;
             }
 
-            // --- 🛡️ 强力修复逻辑 (Robust Fix) ---
-
-            // 1. 确保 correct 存在
-            if (!quizData.correct) quizData.correct = word;
-            if (!quizData.question) quizData.question = `Quiz for ${word}`;
-
-            // 2. 确保 distractors 是数组
-            if (!Array.isArray(quizData.distractors)) {
-                quizData.distractors = [];
-            }
-
-            // 3. 强行补全干扰项 (如果不够 3 个，自动补 Random Option，绝不跳过)
-            while (quizData.distractors.length < 3) {
-                console.log("   ⚠️ AI missed a distractor. Auto-filling.");
-                quizData.distractors.push("Incorrect Option");
+            // --- 检查数据完整性 ---
+            // 如果 distractors 丢了，还是跳过吧，宁缺毋滥
+            if (!quizData.distractors || !Array.isArray(quizData.distractors) || quizData.distractors.length < 3) {
+                console.error("   ⚠️ Invalid distractors format. Skipping.");
+                continue;
             }
 
             // --- 🔀 洗牌逻辑 ---
@@ -174,8 +170,8 @@ async function main() {
                 if (opt.isCorrect) correctLabel = label;
             });
 
-            // 写入 Notion
-            await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
+            // 4. 写入 Notion (带错误检查)
+            const updateResp = await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
                 method: "PATCH",
                 headers: {
                     "Authorization": `Bearer ${notionToken}`,
@@ -194,7 +190,13 @@ async function main() {
                     }
                 })
             });
-            console.log(`   ✅ Generated MCQ for ${word} (Ans: ${correctLabel})`);
+
+            if (!updateResp.ok) {
+                const errorDetail = await updateResp.text();
+                console.error(`   ❌ Failed to update Notion:`, errorDetail);
+            } else {
+                console.log(`   ✅ Generated MCQ for ${word} (Ans: ${correctLabel})`);
+            }
         }
 
         console.log("🎉 All Done!");
