@@ -2,7 +2,7 @@
 
 async function main() {
     try {
-        console.log("🚀 Starting MCQ Quiz Generation (JSON Mode + AutoFix)...");
+        console.log("🚀 Starting MCQ Quiz Generation (Debug Mode)...");
 
         const databaseId = process.env.NOTION_DB_ID;
         const notionToken = process.env.NOTION_TOKEN;
@@ -66,40 +66,35 @@ async function main() {
 
             console.log(`   - Generating [${selectedType}] for: "${word}"`);
 
-            // 构造 Prompt
-            let prompt = `Task: Create a Multiple Choice Quiz for the English word: "${word}". Type: ${selectedType}.
+            // --- 🔧 简化版 Prompt (降低 AI 思考难度) ---
+            let prompt = `Generate a multiple-choice quiz for the word: "${word}".
+            Type: ${selectedType}.
             
-            Output JSON Schema:
+            Strictly output valid JSON only. Format:
             {
-                "question": "string (The question text)",
-                "correct": "string (The correct answer word)",
-                "distractors": ["string", "string", "string"] (Array of 3 incorrect words)
+              "q": "The question text here",
+              "a": "${word}",
+              "w": ["wrong word 1", "wrong word 2", "wrong word 3"]
             }
+
+            Rules:
+            1. "q": The question.
+            2. "a": The correct answer (must be the word "${word}").
+            3. "w": An array of exactly 3 incorrect options (distractors).
             `;
 
-            if (selectedType === "sentence") {
-                prompt += `
-                Requirement: Create a sentence where "${word}" fits perfectly, replacing it with "______".
-                Distractors must be the same part of speech and contextually plausible but wrong.`;
-            } else if (selectedType === "definition") {
-                prompt += `
-                Requirement: Provide a clear English definition for "${word}".`;
-            } else if (selectedType === "thesaurus") {
-                prompt += `
-                Requirement: Ask "Which word means: [synonyms]?".`;
-            }
+            if (selectedType === "sentence") prompt += ` For "q", write a sentence with "______" missing.`;
+            if (selectedType === "definition") prompt += ` For "q", write the definition.`;
+            if (selectedType === "thesaurus") prompt += ` For "q", ask for synonyms.`;
 
-            // 调用 Gemini (开启 JSON Mode)
+            // 调用 Gemini
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
             const geminiResp = await fetch(geminiUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    // 🌟 核心修改：强制开启 JSON 模式
-                    generationConfig: {
-                        response_mime_type: "application/json"
-                    }
+                    contents: [{ parts: [{ text: prompt }] }]
+                        // 暂时去掉 response_mime_type，因为有些旧版 Flash 模型对这个支持不稳定，我们用正则提取更稳
                 })
             });
 
@@ -114,53 +109,61 @@ async function main() {
                 }
             }
 
+            // 🐛 打印出来给用户看 (关键一步！)
+            console.log("   🐛 DEBUG AI OUTPUT:", aiText);
+
+            // --- 🔧 强力 JSON 提取 ---
             let quizData = {};
             try {
-                // 直接解析，因为开了 JSON Mode，通常不需要正则清洗了
-                quizData = JSON.parse(aiText);
+                // 尝试提取第一个 { 和最后一个 } 之间的内容
+                const firstBrace = aiText.indexOf('{');
+                const lastBrace = aiText.lastIndexOf('}');
+                if (firstBrace !== -1 && lastBrace !== -1) {
+                    const jsonStr = aiText.substring(firstBrace, lastBrace + 1);
+                    quizData = JSON.parse(jsonStr);
+                } else {
+                    // 如果没找到大括号，尝试直接解析
+                    quizData = JSON.parse(aiText);
+                }
             } catch (e) {
-                console.error("   ⚠️ JSON Parse Failed. AI Output:", aiText);
-                continue;
+                console.error("   ❌ JSON Parse Failed. Falling back.");
             }
 
-            // --- 🛡️ 自动修复逻辑 (Auto Fix) ---
+            // --- 🔧 数据标准化 (兼容 simplified keys) ---
+            // 无论 AI 返回 q/question, a/correct, w/distractors，我们都认
+            const questionText = quizData.q || quizData.question || `Quiz for ${word}`;
+            const correctAnswer = quizData.a || quizData.correct || word;
+            let distractors = quizData.w || quizData.distractors || [];
 
-            // 修复 1: 如果 distractors 是字符串 (例如 "a, b, c")，自动转数组
-            if (typeof quizData.distractors === 'string') {
-                quizData.distractors = quizData.distractors.split(/,|-|\n/).map(s => s.trim()).filter(s => s.length > 0);
+            // 再次检查 distractors 是否为字符串
+            if (typeof distractors === 'string') {
+                distractors = distractors.split(/,|-|\n/).map(s => s.trim()).filter(s => s.length > 0);
             }
+            if (!Array.isArray(distractors)) distractors = [];
 
-            // 修复 2: 如果 distractors 还是空的或者不够，从备用库里补
-            if (!Array.isArray(quizData.distractors)) {
-                quizData.distractors = [];
+            // 如果还是不够，这次我们打印显眼的错误提示，但依然补全以防程序挂掉
+            while (distractors.length < 3) {
+                distractors.push("⚠️ Error: AI failed option");
             }
-
-            // 补全不够的选项，防止报错跳过
-            while (quizData.distractors.length < 3) {
-                quizData.distractors.push("Another Option");
-            }
-
-            // 截断多余的 (万一给了 10 个)
-            quizData.distractors = quizData.distractors.slice(0, 3);
-
+            distractors = distractors.slice(0, 3);
 
             // --- 🔀 洗牌逻辑 ---
             let options = [
-                { text: quizData.correct || word, isCorrect: true }, // 这里的 fallback 防止 correct 为空
-                { text: quizData.distractors[0], isCorrect: false },
-                { text: quizData.distractors[1], isCorrect: false },
-                { text: quizData.distractors[2], isCorrect: false }
+                { text: correctAnswer, isCorrect: true },
+                { text: distractors[0], isCorrect: false },
+                { text: distractors[1], isCorrect: false },
+                { text: distractors[2], isCorrect: false }
             ];
 
             options.sort(() => Math.random() - 0.5);
 
             const labels = ["A", "B", "C", "D"];
-            let questionText = (quizData.question || `Quiz for ${word}`) + "\n\n";
+            let finalQuestion = questionText + "\n\n";
             let correctLabel = "";
 
             options.forEach((opt, index) => {
                 const label = labels[index];
-                questionText += `${label}. ${opt.text}\n`;
+                finalQuestion += `${label}. ${opt.text}\n`;
                 if (opt.isCorrect) correctLabel = label;
             });
 
@@ -175,7 +178,7 @@ async function main() {
                 body: JSON.stringify({
                     properties: {
                         "Question": {
-                            rich_text: [{ text: { content: questionText } }]
+                            rich_text: [{ text: { content: finalQuestion } }]
                         },
                         "Answer Key": {
                             rich_text: [{ text: { content: correctLabel } }]
