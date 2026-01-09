@@ -1,9 +1,11 @@
-// scripts/runQuiz.js
+// quiz/scripts/runQuiz.js
 
+// 移除 node-fetch 依赖，直接使用 Node 18 原生 fetch
+// const fetch = require('node-fetch'); 
 
 async function main() {
     try {
-        console.log("🚀 Starting MCQ Quiz Generation...");
+        console.log("🚀 Starting MCQ Quiz Generation (Robust Mode)...");
 
         const databaseId = process.env.NOTION_DB_ID;
         const notionToken = process.env.NOTION_TOKEN;
@@ -13,7 +15,7 @@ async function main() {
             throw new Error("❌ Missing Environment Variables!");
         }
 
-        // 1. 筛选 Notion (找 Review Stage > 0 的单词)
+        // 1. 筛选 Notion
         const queryResp = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
             method: "POST",
             headers: {
@@ -22,7 +24,7 @@ async function main() {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                page_size: 5, // 每次出 5 题
+                page_size: 5,
                 filter: {
                     and: [
                         { property: "Review Stage", number: { greater_than: 0 } }
@@ -34,16 +36,12 @@ async function main() {
         const data = await queryResp.json();
         let wordsToQuiz = data.results || [];
 
-        // --- 修复点 1: 日期过滤 (替换掉 ?. 写法) ---
+        // 日期过滤
         const todayStr = new Date().toISOString().split('T')[0];
 
         wordsToQuiz = wordsToQuiz.filter(p => {
             const lastQuiz = p.properties["Last Quiz"];
-            // 如果没有 Last Quiz 属性，或者没有日期，视为“没做过”，保留
-            if (!lastQuiz || !lastQuiz.date) {
-                return true;
-            }
-            // 如果有日期，判断是否“不是今天”
+            if (!lastQuiz || !lastQuiz.date) return true;
             return lastQuiz.date.start !== todayStr;
         });
 
@@ -55,12 +53,11 @@ async function main() {
             return;
         }
 
-        console.log(`📝 Processing ${wordsToQuiz.length} words into MCQs...`);
+        console.log(`📝 Processing ${wordsToQuiz.length} words...`);
 
         // 2. 循环出题
         for (const page of wordsToQuiz) {
 
-            // --- 修复点 2: 获取单词 (替换掉 ?. 写法) ---
             let word = null;
             const nameProp = page.properties["Name"];
             if (nameProp && nameProp.title && nameProp.title.length > 0) {
@@ -73,6 +70,8 @@ async function main() {
             const quizTypes = ["sentence", "definition", "thesaurus"];
             const selectedType = quizTypes[Math.floor(Math.random() * quizTypes.length)];
 
+            console.log(`   - Generating [${selectedType}] for: "${word}"`);
+
             // 构造 Prompt
             let prompt = `Task: Create a Multiple Choice Quiz for the English word: "${word}". Type: ${selectedType}.`;
 
@@ -84,7 +83,7 @@ async function main() {
                     "correct": "${word}",
                     "distractors": ["word1", "word2", "word3"]
                 }
-                (Distractors must be same part of speech, plausible but clearly wrong contextually).`;
+                (Distractors must be same part of speech, plausible but wrong).`;
             } else if (selectedType === "definition") {
                 prompt += `
                 Provide an English definition for "${word}".
@@ -103,7 +102,10 @@ async function main() {
                 }`;
             }
 
-            prompt += ` STRICT JSON ONLY. No Markdown.`;
+            prompt += `
+            IMPORTANT: Output RAW JSON only. Do not wrap in markdown blocks. 
+            Ensure "distractors" is an array of 3 strings.
+            `;
 
             // 调用 Gemini
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
@@ -115,7 +117,7 @@ async function main() {
 
             const gData = await geminiResp.json();
 
-            // --- 修复点 3: 获取 AI 回复 (替换掉 ?. 写法) ---
+            // 获取 AI 回复 (防报错写法)
             let aiText = "{}";
             if (gData && gData.candidates && gData.candidates.length > 0) {
                 const firstCandidate = gData.candidates[0];
@@ -124,24 +126,35 @@ async function main() {
                 }
             }
 
+            // 清洗 JSON
             aiText = aiText.replace(/```json/g, "").replace(/```/g, "").trim();
 
             let quizData = {};
             try {
                 quizData = JSON.parse(aiText);
             } catch (e) {
-                console.error("⚠️ JSON Parse Error", e);
+                console.error("   ⚠️ JSON Parse Error. Raw output:", aiText);
                 continue;
             }
 
-            // --- 🔀 洗牌逻辑 (Shuffle Options) ---
-            // 确保 distractors 存在，防止报错
-            if (!quizData.distractors || quizData.distractors.length < 3) {
-                console.log("   ⚠️ Skipping due to insufficient distractors.");
-                continue;
+            // --- 🛡️ 强力修复逻辑 (Robust Fix) ---
+
+            // 1. 确保 correct 存在
+            if (!quizData.correct) quizData.correct = word;
+            if (!quizData.question) quizData.question = `Quiz for ${word}`;
+
+            // 2. 确保 distractors 是数组
+            if (!Array.isArray(quizData.distractors)) {
+                quizData.distractors = [];
             }
 
-            // 1. 把正确答案和干扰项放在一起
+            // 3. 强行补全干扰项 (如果不够 3 个，自动补 Random Option，绝不跳过)
+            while (quizData.distractors.length < 3) {
+                console.log("   ⚠️ AI missed a distractor. Auto-filling.");
+                quizData.distractors.push("Incorrect Option");
+            }
+
+            // --- 🔀 洗牌逻辑 ---
             let options = [
                 { text: quizData.correct, isCorrect: true },
                 { text: quizData.distractors[0], isCorrect: false },
@@ -149,21 +162,19 @@ async function main() {
                 { text: quizData.distractors[2], isCorrect: false }
             ];
 
-            // 2. 随机打乱数组
             options.sort(() => Math.random() - 0.5);
 
-            // 3. 格式化成 ABCD 文本
             const labels = ["A", "B", "C", "D"];
-            let questionText = quizData.question + "\n\n"; // 题目部分
+            let questionText = quizData.question + "\n\n";
             let correctLabel = "";
 
             options.forEach((opt, index) => {
                 const label = labels[index];
-                questionText += `${label}. ${opt.text}\n`; // 拼接 A. word
-                if (opt.isCorrect) correctLabel = label; // 记录哪个字母是对的
+                questionText += `${label}. ${opt.text}\n`;
+                if (opt.isCorrect) correctLabel = label;
             });
 
-            // 4. 写入 Notion
+            // 写入 Notion
             await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
                 method: "PATCH",
                 headers: {
@@ -177,9 +188,9 @@ async function main() {
                             rich_text: [{ text: { content: questionText } }]
                         },
                         "🔑 Answer Key": {
-                            rich_text: [{ text: { content: correctLabel } }] // 这里的 Key 变成了 "A", "B"...
+                            rich_text: [{ text: { content: correctLabel } }]
                         },
-                        "✏️ My Answer": { rich_text: [] } // 清空你的答案
+                        "✏️ My Answer": { rich_text: [] }
                     }
                 })
             });
