@@ -77,7 +77,7 @@ async function main() {
 
             // 🚨🚨🚨 核心修改：换模型名字 🚨🚨🚨
             // 尝试使用 'gemini-1.5-flash-latest'。如果报错，请手动改成 'gemini-pro'
-            const modelName = "gemini-1.5-flash-latest";
+            const modelName = "gemini-pro";
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
 
             const geminiResp = await fetch(geminiUrl, {
