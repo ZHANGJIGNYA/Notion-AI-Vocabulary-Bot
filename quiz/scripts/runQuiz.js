@@ -1,8 +1,45 @@
 // quiz/scripts/runQuiz.js
 
+async function getValidModel(apiKey) {
+    console.log("🔍 Auto-detecting available Gemini models...");
+    try {
+        const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (!resp.ok) {
+            console.error("❌ Failed to list models. Status:", resp.status);
+            return null;
+        }
+        const data = await resp.json();
+
+        // 找到所有支持 'generateContent' 的模型
+        const candidates = data.models.filter(m =>
+            m.supportedGenerationMethods &&
+            m.supportedGenerationMethods.includes("generateContent")
+        );
+
+        if (candidates.length === 0) return null;
+
+        // 优先找 Flash (速度快)，其次找 Pro，最后随便拿一个
+        let chosen = candidates.find(m => m.name.includes("flash"));
+        if (!chosen) chosen = candidates.find(m => m.name.includes("pro"));
+        if (!chosen) chosen = candidates[0];
+
+        // API 返回的名字通常是 "models/gemini-1.5-flash"，我们需要去掉前缀吗？
+        // 其实 generateContent 的 URL 格式是 /models/{model}:generateContent
+        // 如果 name 本身就是 "models/..."，那我们提取后面的部分，或者直接拼 URL 时注意一下
+
+        // 这里的 chosen.name 通常是 "models/gemini-1.5-flash"
+        console.log(`✅ Auto-selected model: ${chosen.name}`);
+        return chosen.name; // 返回完整名字，例如 models/gemini-1.5-flash
+
+    } catch (e) {
+        console.error("❌ Model detection failed:", e);
+        return null;
+    }
+}
+
 async function main() {
     try {
-        console.log("🚀 Starting MCQ Quiz Generation (Model Fix Mode)...");
+        console.log("🚀 Starting MCQ Quiz Generation (Auto-Model-Discovery Mode)...");
 
         const databaseId = process.env.NOTION_DB_ID;
         const notionToken = process.env.NOTION_TOKEN;
@@ -12,7 +49,14 @@ async function main() {
             throw new Error("❌ Missing Environment Variables!");
         }
 
-        // 1. 筛选 Notion
+        // --- 🤖 第一步：自动寻找可用的模型名字 ---
+        const modelFullName = await getValidModel(geminiApiKey);
+        if (!modelFullName) {
+            throw new Error("❌ No valid Gemini models found for this API Key. Check your Google AI Studio account.");
+        }
+        // modelFullName 类似 "models/gemini-1.5-flash"
+
+        // --- 第二步：筛选 Notion ---
         const queryResp = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
             method: "POST",
             headers: {
@@ -50,7 +94,7 @@ async function main() {
 
         console.log(`📝 Processing ${wordsToQuiz.length} words...`);
 
-        // 2. 循环出题
+        // --- 第三步：循环出题 ---
         for (const page of wordsToQuiz) {
 
             let word = null;
@@ -75,10 +119,9 @@ async function main() {
               "w": ["wrong1", "wrong2", "wrong3"]
             }`;
 
-            // 🚨🚨🚨 核心修改：换模型名字 🚨🚨🚨
-            // 尝试使用 'gemini-1.5-flash-latest'。如果报错，请手动改成 'gemini-pro'
-            const modelName = "gemini-pro";
-            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
+            // 构造 URL：注意 modelFullName 已经包含了 "models/" 前缀
+            // 例如：https://.../v1beta/models/gemini-1.5-flash:generateContent
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/${modelFullName}:generateContent?key=${geminiApiKey}`;
 
             const geminiResp = await fetch(geminiUrl, {
                 method: "POST",
@@ -90,21 +133,20 @@ async function main() {
 
             if (!geminiResp.ok) {
                 const errorText = await geminiResp.text();
-                console.error(`   ❌ GEMINI API ERROR! Status: ${geminiResp.status}`);
-                console.error(`   ❌ Error Details: ${errorText}`);
-                console.log("   ⚠️ Skipping this word due to API error.");
+                console.error(`   ❌ API ERROR! Status: ${geminiResp.status}`);
+                console.error(`   ❌ Detail: ${errorText}`);
+                console.log("   ⚠️ Skipping word.");
                 continue;
             }
 
             const gData = await geminiResp.json();
 
             if (!gData.candidates || gData.candidates.length === 0) {
-                console.error("   ❌ Gemini returned 200 OK, but NO candidates.");
+                console.error("   ❌ 200 OK but NO output.");
                 continue;
             }
 
             let aiText = gData.candidates[0].content.parts[0].text;
-            console.log("   🐛 AI Response Preview:", aiText.substring(0, 50) + "...");
 
             // 提取 JSON
             let quizData = {};
@@ -117,11 +159,11 @@ async function main() {
                     quizData = JSON.parse(aiText);
                 }
             } catch (e) {
-                console.error("   ⚠️ JSON Parse Failed. Falling back.");
+                console.error("   ⚠️ JSON Parse Failed. Fallback.");
                 quizData = { q: `Quiz for ${word}`, a: word, w: ["Option 1", "Option 2", "Option 3"] };
             }
 
-            // 标准化数据
+            // 标准化
             const questionText = quizData.q || quizData.question || `Quiz for ${word}`;
             const correctAnswer = quizData.a || quizData.correct || word;
             let distractors = quizData.w || quizData.distractors || [];
