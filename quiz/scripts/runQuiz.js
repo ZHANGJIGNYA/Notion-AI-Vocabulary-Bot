@@ -184,13 +184,13 @@ async function main() {
                 },
                 body: JSON.stringify({
                     properties: {
-                        "❓ Question": {
+                        "Question": {
                             rich_text: [{ text: { content: questionText } }]
                         },
-                        "🔑 Answer Key": {
+                        "Answer Key": {
                             rich_text: [{ text: { content: correctLabel } }]
                         },
-                        "✏️ My Answer": { rich_text: [] }
+                        "My Answer": { rich_text: [] }
                     }
                 })
             });
