@@ -2,7 +2,7 @@
 
 async function main() {
     try {
-        console.log("🚀 Starting MCQ Quiz Generation (Deep Debug Mode)...");
+        console.log("🚀 Starting MCQ Quiz Generation (Model Fix Mode)...");
 
         const databaseId = process.env.NOTION_DB_ID;
         const notionToken = process.env.NOTION_TOKEN;
@@ -75,8 +75,10 @@ async function main() {
               "w": ["wrong1", "wrong2", "wrong3"]
             }`;
 
-            // 调用 Gemini (带详细错误检查)
-            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
+            // 🚨🚨🚨 核心修改：换模型名字 🚨🚨🚨
+            // 尝试使用 'gemini-1.5-flash-latest'。如果报错，请手动改成 'gemini-pro'
+            const modelName = "gemini-1.5-flash-latest";
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
 
             const geminiResp = await fetch(geminiUrl, {
                 method: "POST",
@@ -86,31 +88,23 @@ async function main() {
                 })
             });
 
-            // 🚨🚨🚨 核心调试点：检查 HTTP 状态码 🚨🚨🚨
             if (!geminiResp.ok) {
                 const errorText = await geminiResp.text();
                 console.error(`   ❌ GEMINI API ERROR! Status: ${geminiResp.status}`);
                 console.error(`   ❌ Error Details: ${errorText}`);
                 console.log("   ⚠️ Skipping this word due to API error.");
-                continue; // 跳过这个词，防止程序崩溃
+                continue;
             }
 
             const gData = await geminiResp.json();
 
-            // 🚨🚨🚨 检查返回的数据结构 🚨🚨🚨
             if (!gData.candidates || gData.candidates.length === 0) {
                 console.error("   ❌ Gemini returned 200 OK, but NO candidates.");
-                console.error("   ❌ Full Response:", JSON.stringify(gData));
-
-                // 如果是被 Safety Filter 拦截了，通常会有 promptFeedback
-                if (gData.promptFeedback) {
-                    console.error("   ❌ Safety Block:", JSON.stringify(gData.promptFeedback));
-                }
                 continue;
             }
 
-            // 获取 AI 文本
             let aiText = gData.candidates[0].content.parts[0].text;
+            console.log("   🐛 AI Response Preview:", aiText.substring(0, 50) + "...");
 
             // 提取 JSON
             let quizData = {};
@@ -123,9 +117,8 @@ async function main() {
                     quizData = JSON.parse(aiText);
                 }
             } catch (e) {
-                console.error("   ⚠️ JSON Parse Failed. Raw:", aiText);
-                // 这里如果不跳过，就会生成错误题目。为了调试，我们先生成个假题目看看流程对不对
-                quizData = { q: "Error generating quiz", a: word, w: ["Error", "Error", "Error"] };
+                console.error("   ⚠️ JSON Parse Failed. Falling back.");
+                quizData = { q: `Quiz for ${word}`, a: word, w: ["Option 1", "Option 2", "Option 3"] };
             }
 
             // 标准化数据
@@ -133,7 +126,7 @@ async function main() {
             const correctAnswer = quizData.a || quizData.correct || word;
             let distractors = quizData.w || quizData.distractors || [];
 
-            if (!Array.isArray(distractors)) distractors = ["Option 1", "Option 2", "Option 3"];
+            if (!Array.isArray(distractors)) distractors = [];
             while (distractors.length < 3) distractors.push("Option X");
             distractors = distractors.slice(0, 3);
 
