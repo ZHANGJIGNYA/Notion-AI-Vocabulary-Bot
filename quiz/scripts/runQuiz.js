@@ -57,34 +57,52 @@ async function main() {
         // modelFullName 类似 "models/gemini-1.5-flash"
 
         // --- 第二步：筛选 Notion ---
-        const queryResp = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+        const queryResp = await fetch(
+        `https://api.notion.com/v1/databases/${databaseId}/query`,
+        {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${notionToken}`,
-                "Notion-Version": "2022-06-28",
-                "Content-Type": "application/json"
+            "Authorization": `Bearer ${notionToken}`,
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                page_size: 50,
-                filter: {
-                    and: [
-                    { property: "Review Stage", number: { greater_than: 0 } },
-                    { property: "Question", rich_text: { is_empty: true } }
-                    ]
-                }
+            page_size: 50,
+            filter: {
+                or: [
+                { property: "Last Quiz", date: { is_empty: true } },
+                { property: "Quiz Due", checkbox: { equals: true } }
+                ]
+            }
             })
-        });
+        }
+        );
 
         const data = await queryResp.json();
         let wordsToQuiz = data.results || [];
 
         // 日期过滤
-        const todayStr = new Date().toISOString().split('T')[0];
-        wordsToQuiz = wordsToQuiz.filter(p => {
-            const lastQuiz = p.properties["Last Quiz"];
-            if (!lastQuiz || !lastQuiz.date) return true;
-            return lastQuiz.date.start !== todayStr;
-        });
+        const todayStr = new Date().toISOString().split("T")[0];
+
+        body: JSON.stringify({
+        properties: {
+            "Question": {
+            rich_text: [{ text: { content: finalQuestion } }]
+            },
+            "Answer Key": {
+            rich_text: [{ text: { content: correctLabel } }]
+            },
+            "My Answer": {
+            rich_text: []
+            },
+            "Last Quiz": {
+            date: { start: todayStr }
+            },
+            "Quiz Due": {
+            checkbox: false
+            }
+        }
+        })
 
         wordsToQuiz.sort(() => 0.5 - Math.random());
 
