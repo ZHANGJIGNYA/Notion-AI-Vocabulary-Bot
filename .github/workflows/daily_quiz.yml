@@ -5,8 +5,12 @@ on:
   workflow_dispatch:
   
   # (可选) 如果你想每天早上 8 点自动跑，把下面两行的 # 去掉
-  # schedule:
-  #   - cron: '0 0 * * *'
+  schedule:
+    - cron: "*/5 * * * *"
+
+concurrency:
+  group: notion-quiz
+  cancel-in-progress: true
 
 jobs:
   run-quiz:

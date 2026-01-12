@@ -65,10 +65,11 @@ async function main() {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                page_size: 5,
+                page_size: 50,
                 filter: {
                     and: [
-                        { property: "Review Stage", number: { greater_than: 0 } }
+                    { property: "Review Stage", number: { greater_than: 0 } },
+                    { property: "Question", rich_text: { is_empty: true } }
                     ]
                 }
             })
@@ -204,7 +205,8 @@ async function main() {
                     properties: {
                         "Question": { rich_text: [{ text: { content: finalQuestion } }] },
                         "Answer Key": { rich_text: [{ text: { content: correctLabel } }] },
-                        "My Answer": { rich_text: [] }
+                        "My Answer": { rich_text: [] },
+                        "Last Quiz": { date: { start: todayStr } }
                     }
                 })
             });
