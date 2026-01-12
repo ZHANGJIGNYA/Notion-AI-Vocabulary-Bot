@@ -137,11 +137,11 @@ async function main() {
         quizTypes[Math.floor(Math.random() * quizTypes.length)];
 
       const prompt = `Generate ONE multiple-choice question for the word "${word}".
-        Type: ${selectedType}.
-        Return ONLY valid JSON. No markdown. No extra text.
+Type: ${selectedType}.
+Return ONLY valid JSON. No markdown. No extra text.
 
-        Schema:
-        {"q":"question","a":"${word}","w":["wrong1","wrong2","wrong3"]}`;
+Schema:
+{"q":"question","a":"${word}","w":["wrong1","wrong2","wrong3"]}`;
 
       // ===== 3. 调用 Gemini =====
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/${modelFullName}:generateContent?key=${geminiApiKey}`;
