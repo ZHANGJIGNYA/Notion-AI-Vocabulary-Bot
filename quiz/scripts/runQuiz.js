@@ -199,10 +199,13 @@ async function main() {
                 { text: distractors[2], isCorrect: false }
             ];
 
+            // 1) 洗牌 options
             options.sort(() => Math.random() - 0.5);
 
             const labels = ["A", "B", "C", "D"];
-            let finalQuestion = questionText + "\n\n";
+
+            // 2) 先拼 finalQuestion / correctLabel（必须在 PATCH 之前）
+            let finalQuestion = (questionText || `Choose the correct answer for "${word}".`) + "\n\n";
             let correctLabel = "";
 
             options.forEach((opt, index) => {
@@ -211,22 +214,23 @@ async function main() {
                 if (opt.isCorrect) correctLabel = label;
             });
 
-            // 写入 Notion
+            // 3) 再写入 Notion
             const updateResp = await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
-                method: "PATCH",
-                headers: {
-                    "Authorization": `Bearer ${notionToken}`,
-                    "Notion-Version": "2022-06-28",
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    properties: {
-                        "Question": { rich_text: [{ text: { content: finalQuestion } }] },
-                        "Answer Key": { rich_text: [{ text: { content: correctLabel } }] },
-                        "My Answer": { rich_text: [] },
-                        "Last Quiz": { date: { start: todayStr } }
-                    }
-                })
+            method: "PATCH",
+            headers: {
+                "Authorization": `Bearer ${notionToken}`,
+                "Notion-Version": "2022-06-28",
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                properties: {
+                "Question": { rich_text: [{ text: { content: finalQuestion } }] },
+                "Answer Key": { rich_text: [{ text: { content: correctLabel } }] },
+                "My Answer": { rich_text: [] },
+                "Last Quiz": { date: { start: todayStr } },
+                "Quiz Due": { checkbox: false }
+                }
+            })
             });
 
             if (!updateResp.ok) {
