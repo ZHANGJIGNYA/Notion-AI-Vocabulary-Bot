@@ -73,11 +73,11 @@ async function main() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          page_size: 50,
+          page_size: 5,
           filter: {
-            or: [
-              { property: "Last Quiz", date: { is_empty: true } },
-              { property: "Quiz Due", checkbox: { equals: true } },
+            and: [
+              { property: "Review Stage", number: { greater_than: 0 } },
+              { property: "Question", rich_text: { is_empty: true } },
             ],
           },
         }),
