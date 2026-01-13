@@ -225,7 +225,7 @@ Schema:
               "Answer Key": {
                 rich_text: [{ text: { content: correctLabel } }],
               },
-              "My Answer": { rich_text: [] },
+              "My Answer": { select: { name: "Pick One" } },
               "Last Quiz": { date: { start: todayStr } },
               "Quiz Due": { checkbox: false },
             },
