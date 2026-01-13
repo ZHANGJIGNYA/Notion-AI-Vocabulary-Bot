@@ -90,25 +90,23 @@ async function main() {
     // 日期过滤
     const todayStr = new Date().toISOString().split("T")[0];
 
-    body: JSON.stringify({
-      properties: {
-        Question: {
-          rich_text: [{ text: { content: finalQuestion } }],
-        },
-        "Answer Key": {
-          rich_text: [{ text: { content: correctLabel } }],
-        },
-        "My Answer": {
-          rich_text: [],
-        },
-        "Last Quiz": {
-          date: { start: todayStr },
-        },
-        "Quiz Due": {
-          checkbox: false,
-        },
-      },
-    });
+    // body: JSON.stringify({
+    //   properties: {
+
+    //     "Answer Key": {
+    //       rich_text: [{ text: { content: correctLabel } }],
+    //     },
+    //     "My Answer": {
+    //       rich_text: [],
+    //     },
+    //     "Last Quiz": {
+    //       date: { start: todayStr },
+    //     },
+    //     "Quiz Due": {
+    //       checkbox: false,
+    //     },
+    //   },
+    // });
 
     wordsToQuiz.sort(() => 0.5 - Math.random());
 
