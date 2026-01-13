@@ -1,4 +1,4 @@
-# 🧠 Notion AI Vocabulary Bot（中文说明）
+# 🧠 Notion AI Vocabulary Bot
 
 [中文说明](README.md) |[English](README.EN.md)
 
