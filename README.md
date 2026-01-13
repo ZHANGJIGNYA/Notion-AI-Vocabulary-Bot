@@ -1,3 +1,7 @@
+# Notion AI Vocabulary Bot
+
+[English](README.md) | [中文说明](README.zh-CN.md)
+
 ## 🧠 Quiz System (AI-powered Vocabulary Review)
 
 This project includes an automated quiz system designed to help you review vocabulary efficiently using **spaced repetition** and **active recall**.
